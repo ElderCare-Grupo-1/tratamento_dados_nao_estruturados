@@ -3,38 +3,34 @@ import re
 from typing import List, Tuple, Dict, Optional
 import pandas as pd
 import numpy as np
-from rapidfuzz import fuzz, process  # pip install rapidfuzz
+from rapidfuzz import fuzz, process 
 import cv2
-from unidecode import unidecode  # pip install Unidecode
+from unidecode import unidecode  
+import boto3
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import text
+from dotenv import load_dotenv
+import os
 
-def gerar_bases():
-    import tratamento_base_remedios
-    tratamento_base_remedios.__main__()
-    
-def fallback_csvs():
-    import runpy, os
-    script_path = os.path.join(os.path.dirname(__file__), "tratamento_base_remedios.py")
-    if not os.path.exists(script_path):
-        raise FileNotFoundError(script_path)
-    # executa o script no contexto __main__ para disparar o bloco if __name__ == '__main__'
-    runpy.run_path(script_path, run_name="__main__")
 
-def preprocessar_imagem(path, scale=1.0):
-    """Leitura e pré-processamento leve (opcional) para melhorar OCR.
-    Retorna imagem em BGR ou lança FileNotFoundError.
-    """
-    img = cv2.imread(path)
-    if img is None:
-        raise FileNotFoundError(path)
+def preprocessar_imagem(img, scale=1.0, crop_coords=None):
+
+    # cortar a imagem se fornecido crop_coords = (y1, y2, x1, x2)
+    if crop_coords:
+        y1, y2, x1, x2 = crop_coords
+        img = img[y1:y2, x1:x2]
+        # adicionar borda branca para OCR
+        img = cv2.copyMakeBorder(img, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=[255,255,255])
+
+    # redimensionar
     if scale != 1.0:
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # redução de ruído e equalização
     gray = cv2.bilateralFilter(gray, 9, 75, 75)
-    # binarização adaptativa (para texto)
     th = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                               cv2.THRESH_BINARY, 15, 9)
-    # inverter para easyocr (preto texto sobre branco)
+                               cv2.THRESH_BINARY, 11, 2)
     th = cv2.bitwise_not(th)
     return th
 
@@ -94,21 +90,29 @@ def gerar_ngrams(tokens, max_n=3):
 DEFAULT_STOPWORDS = {"DATA", "NOME", "HORA", "DRA", "DAS", "DOS", "DE", "E"}
 
 
-def carregar_base(base_csv: str):
-    """Carrega e normaliza a base de remédios.
-
-    Retorna: (base_norm_map, base_norm_map_num, base_norm_list, base_norm_list_num, base_word_set)
+def carregar_base_mysql(engine):
     """
-    base_df = pd.read_csv(base_csv, dtype=str)
-    base_list = base_df['NOME_PRODUTO'].fillna("").astype(str).tolist()
+    Carrega e normaliza a base de remédios diretamente do MySQL (TBL_MEDICAMENTOS).
+
+    Retorna: 
+        base_norm_map, base_norm_map_num, base_norm_map_nodose, 
+        base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set
+    """
+    # Buscar os medicamentos no MySQL
+    query = "SELECT NM_MEDICAMENTO FROM EC_DATA.TBL_MEDICAMENTOS"
+    base_df = pd.read_sql(query, engine)
+    
+    base_list = base_df['NM_MEDICAMENTO'].fillna("").astype(str).tolist()
+    
     base_norm_map = {normalizar(name): name for name in base_list if normalizar(name)}
     base_norm_list = list(base_norm_map.keys())
+    
     base_norm_map_num = {normalizar_e_manter_numeros(name): name for name in base_list if normalizar_e_manter_numeros(name)}
     base_norm_list_num = list(base_norm_map_num.keys())
-    # versão da base sem doses (remove 1G, 600MG etc) para matching mais permissivo
+    
     base_norm_map_nodose = {normalizar(remover_dose(name)): name for name in base_list if normalizar(remover_dose(name))}
     base_norm_list_nodose = list(base_norm_map_nodose.keys())
-
+    
     base_word_set = set()
     for name in base_list:
         toks = re.findall(r"[A-Za-z0-9]+", name)
@@ -116,17 +120,18 @@ def carregar_base(base_csv: str):
             tn = normalizar(t)
             if tn:
                 base_word_set.add(tn)
+    
+    return base_norm_map, base_norm_map_num, base_norm_map_nodose, \
+           base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set
 
-    return base_norm_map, base_norm_map_num, base_norm_map_nodose, base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set
 
-
-def extrair_linhas_ocr(reader, image_path: str, preprocess: bool):
+def extrair_linhas_ocr(reader, img: str, preprocess: bool):
     """Roda o OCR (com ou sem pré-processamento) e normaliza o retorno em [(text, conf)]."""
     if preprocess:
-        img = preprocessar_imagem(image_path)
+        img = preprocessar_imagem(img)
         ocr_results = reader.readtext(img, detail=1)
     else:
-        ocr_results = reader.readtext(image_path, detail=1)
+        ocr_results = reader.readtext(img, detail=1)
 
     lines: List[Tuple[str, float]] = []
     for item in ocr_results:
@@ -255,7 +260,7 @@ def casar_candidatos(cand: str,
     }
 
 
-def ocr_e_casar(image_path,
+def ocr_e_casar(img,
                   base_csv="remedios_base_tratada.csv",
                   fuzzy_threshold=80,
                   combined_threshold=75,
@@ -269,9 +274,9 @@ def ocr_e_casar(image_path,
     reader = easyocr.Reader(["pt", "en"], gpu=False)
 
     # carregar base e linhas OCR
-    base_norm_map, base_norm_map_num, base_norm_map_nodose, base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set = carregar_base(base_csv)
-    lines = extrair_linhas_ocr(reader, image_path, preprocess)
-
+    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@3.220.74.53:3306/EC_DATA")
+    base_norm_map, base_norm_map_num, base_norm_map_nodose, base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set = carregar_base_mysql(engine)
+    lines = extrair_linhas_ocr(reader, img, preprocess)
     candidates = construir_candidatos_das_linhas(lines, ngram_max=ngram_max)
 
     matched_details = []
@@ -305,23 +310,34 @@ def ocr_e_casar(image_path,
     results_sorted = sorted([v for v in best_per_name.values() if v['valid']], key=lambda x: x['combined'], reverse=True)
     return results_sorted, matched_details
 
-def procurar_efeitos_colaterais(matched_name: str, notificacoes_csv='notificacoes_base_tratada.csv'):
-    df_notificacoes = pd.read_csv(notificacoes_csv, dtype=str)
-    df_filtrado = df_notificacoes[df_notificacoes['NOME_MEDICAMENTO_WHODRUG'] == matched_name]
-    if df_filtrado.empty:
-        print(f"Nenhum efeito colateral encontrado para: {matched_name}")
-        return
-    print(f"Efeitos colaterais para {matched_name}:")
-    for idx, row in df_filtrado.iterrows():
-        reacao = row.get('REACAO_EVENTO_ADVERSO_MEDDRA', 'N/A')
-        print(f"- Reação: {reacao}")
-
 if __name__ == '__main__':
-    fallback_csvs()
-    IMAGE_PATH = r"D:\Faculdade\tratamento_dados_nao_estruturados\Captura de tela 2025-09-29 210530.png"
+    # fallback_csvs()
+    load_dotenv()
+    
+    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+    AWS_SESSION_TOKEN = os.getenv('AWS_SESSION_TOKEN')
+    AWS_REGION = os.getenv('AWS_REGION')
+
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        aws_session_token=AWS_SESSION_TOKEN,
+        region_name=AWS_REGION
+    )
+    
+    bucket_name = 's3rawgrupo1'
+    key = 'dados-cleaning/medicamentos/receita.PNG'
+    
     try:
+        obj = s3.get_object(Bucket=bucket_name, Key=key)
+        img_bytes = obj['Body'].read()
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
         results_sorted, matched_details = ocr_e_casar(
-            IMAGE_PATH,
+            img,
             base_csv="remedios_base_tratada.csv",
             fuzzy_threshold=60,
             combined_threshold=40,
@@ -339,15 +355,28 @@ if __name__ == '__main__':
     print("Remédios validados:")
     high_conf = [d for d in results_sorted if d.get('combined', 0) > 90]
     print("Remédios com combined > 90:")
+    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@3.220.74.53:3306/EC_DATA")
+
     if high_conf:
-        for d in high_conf:
-            print(f"- {d['matched_name']} (combined={d['combined']:.1f}, fuzzy={d['fuzzy']:.1f}, ocr_conf={d['ocr_conf']:.2f}, cand='{d['candidate']}')")
-            print("\nProcurando efeitos colaterais...")
-            procurar_efeitos_colaterais(d['matched_name'])
+        with engine.begin() as connection:  # transação automática
+            for d in high_conf:
+                try:
+                    # Exibir resultado
+                    print(f"- {d['matched_name']} (combined={d['combined']:.1f}, "
+                        f"fuzzy={d['fuzzy']:.1f}, ocr_conf={d['ocr_conf']:.2f}, cand='{d['candidate']}')")
+
+                    # Inserir no banco
+                    insert_query = text("""
+                        INSERT INTO EC_DATA.TBL_MEDICAMENTOS_PACIENTE (NM_MEDICAMENTO)
+                        VALUES (:nome_remedio)
+                    """)
+                    connection.execute(insert_query, {'nome_remedio': d['matched_name']})
+
+                except SQLAlchemyError as e:
+                    print(f"❌ Erro ao inserir '{d['matched_name']}' no banco de dados: {e}")
+                
     else:
         print("(nenhum resultado com combined > 90)")
 
     print(f"\nTotal candidatos processados: {len(matched_details)}")
     print(f"Total validados (combined>90): {len(high_conf)}")
-
-   
