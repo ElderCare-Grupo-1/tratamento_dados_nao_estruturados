@@ -1,0 +1,31 @@
+name: Data Pipeline CI/CD
+on:
+  workflow_dispatch: # permite rodar manualmente
+
+jobs:
+  data-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Instalar o Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Instalar dependências Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/requirements.txt
+      - name: Transformar dados da base de remérios (Trusted/Client)
+        run: |
+          python tratamento_base_remedios.py
+      - name: Transforma e insere no banco dados não estruturados
+        run: |
+          python tratamento_dados_nestruturados.py
+      - name: Upload dos dados processados no GitHub como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-data
+          path: |
+            remedios_base_tratada.csv
+          retention-days: 7
