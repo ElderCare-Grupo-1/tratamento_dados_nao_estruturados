@@ -312,19 +312,9 @@ def ocr_e_casar(img,
 
 if __name__ == '__main__':
     # fallback_csvs()
-    load_dotenv()
-    
-    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-    AWS_SESSION_TOKEN = os.getenv('AWS_SESSION_TOKEN')
-    AWS_REGION = os.getenv('AWS_REGION')
 
     s3 = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        aws_session_token=AWS_SESSION_TOKEN,
-        region_name=AWS_REGION
+        's3'
     )
     
     bucket_name = 's3rawgrupo1'
