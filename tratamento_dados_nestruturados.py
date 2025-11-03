@@ -345,7 +345,7 @@ if __name__ == '__main__':
     print("Remédios validados:")
     high_conf = [d for d in results_sorted if d.get('combined', 0) > 90]
     print("Remédios com combined > 90:")
-    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@98.94.4.105:3306/EC_DATA")
+    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@52.71.62.175:3306/EC_DATA")
 
     if high_conf:
         with engine.begin() as connection:  # transação automática
