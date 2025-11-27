@@ -99,7 +99,7 @@ if __name__ == '__main__':
     base_remedios_tratada = base_remedios_tratada.to_frame(name='NM_MEDICAMENTO')
     
     try:
-        engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@52.71.62.175:3306/EC_DATA")
+        engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@100.30.117.80:3306/EC_DATA")
         
         with engine.connect() as conn:
             try:
