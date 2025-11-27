@@ -274,7 +274,7 @@ def ocr_e_casar(img,
     reader = easyocr.Reader(["pt", "en"], gpu=False)
 
     # carregar base e linhas OCR
-    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@52.71.62.175:3306/EC_DATA")
+    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@100.30.117.80:3306/EC_DATA")
     base_norm_map, base_norm_map_num, base_norm_map_nodose, base_norm_list, base_norm_list_num, base_norm_list_nodose, base_word_set = carregar_base_mysql(engine)
     lines = extrair_linhas_ocr(reader, img, preprocess)
     candidates = construir_candidatos_das_linhas(lines, ngram_max=ngram_max)
@@ -345,7 +345,7 @@ if __name__ == '__main__':
     print("Remédios validados:")
     high_conf = [d for d in results_sorted if d.get('combined', 0) > 90]
     print("Remédios com combined > 90:")
-    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@52.71.62.175:3306/EC_DATA")
+    engine = create_engine("mysql+pymysql://Aluno:Urubu100%40@100.30.117.80:3306/EC_DATA")
 
     if high_conf:
         with engine.begin() as connection:  # transação automática
