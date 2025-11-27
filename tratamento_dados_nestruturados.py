@@ -318,7 +318,7 @@ if __name__ == '__main__':
     )
     
     bucket_name = 's3rawgrupo1'
-    key = 'dados-cleaning/medicamentos/receita.PNG'
+    key = 'dados-cleaning/medicamentos/receita.png'
     
     try:
         obj = s3.get_object(Bucket=bucket_name, Key=key)
