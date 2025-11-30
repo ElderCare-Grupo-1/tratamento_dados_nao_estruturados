@@ -22,7 +22,8 @@ if __name__ == '__main__':
         'Uso indevido intencional do produto',
         'Odor anormal do produto',
         'Paciente errado',
-        'Medicamento ineficaz'
+        'Medicamento ineficaz',
+        'Dose errada administrada'
     ]
     
     s3 = boto3.client(
